@@ -321,43 +321,41 @@ jobs:
           sed -i '/arc/d' include/soc/Kconfig 2>/dev/null || true
           sed -i '/arc/d' drivers/soc/Kconfig 2>/dev/null || true
 
-          # --- [TARGETED SNIPER RESTORE] ---
-          # HANYA mengunduh file spesifik korban Windows tanpa menyentuh kode Samsung lainnya
-          echo "-> Melakukan Targeted Restore untuk file netfilter yang bentrok..."
+          # --- [TARGETED SNIPER RESTORE V2 - AUTOMATED LOOP] ---
+          # Otomatis mengunduh versi HURUF BESAR dan KECIL untuk semua file netfilter yang bentrok
+          echo "-> Melakukan Targeted Restore otomatis..."
           RAW_LINUX="https://raw.githubusercontent.com/torvalds/linux/v5.4"
           
-          # Restore Headers (.h)
           mkdir -p include/uapi/linux/netfilter include/uapi/linux/netfilter_ipv4 include/uapi/linux/netfilter_ipv6
-          curl -sSo include/uapi/linux/netfilter/xt_connmark.h $RAW_LINUX/include/uapi/linux/netfilter/xt_connmark.h
-          curl -sSo include/uapi/linux/netfilter/xt_rateest.h $RAW_LINUX/include/uapi/linux/netfilter/xt_rateest.h
-          curl -sSo include/uapi/linux/netfilter/xt_tcpmss.h $RAW_LINUX/include/uapi/linux/netfilter/xt_tcpmss.h
-          curl -sSo include/uapi/linux/netfilter/xt_dscp.h $RAW_LINUX/include/uapi/linux/netfilter/xt_dscp.h
-          curl -sSo include/uapi/linux/netfilter/xt_mark.h $RAW_LINUX/include/uapi/linux/netfilter/xt_mark.h
-          curl -sSo include/uapi/linux/netfilter_ipv4/ipt_ecn.h $RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_ecn.h
-          curl -sSo include/uapi/linux/netfilter_ipv4/ipt_ttl.h $RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_ttl.h
-          curl -sSo include/uapi/linux/netfilter_ipv6/ip6t_hl.h $RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_hl.h
-
-          # Restore Source Files (.c) - Pasangan Huruf Besar & Kecil
           mkdir -p net/netfilter net/ipv4/netfilter net/ipv6/netfilter
-          curl -sSo net/netfilter/xt_CONNMARK.c $RAW_LINUX/net/netfilter/xt_CONNMARK.c
-          curl -sSo net/netfilter/xt_connmark.c $RAW_LINUX/net/netfilter/xt_connmark.c
-          curl -sSo net/netfilter/xt_DSCP.c $RAW_LINUX/net/netfilter/xt_DSCP.c
-          curl -sSo net/netfilter/xt_dscp.c $RAW_LINUX/net/netfilter/xt_dscp.c
-          curl -sSo net/netfilter/xt_MARK.c $RAW_LINUX/net/netfilter/xt_MARK.c
-          curl -sSo net/netfilter/xt_mark.c $RAW_LINUX/net/netfilter/xt_mark.c
-          curl -sSo net/netfilter/xt_RATEEST.c $RAW_LINUX/net/netfilter/xt_RATEEST.c
-          curl -sSo net/netfilter/xt_rateest.c $RAW_LINUX/net/netfilter/xt_rateest.c
-          curl -sSo net/netfilter/xt_TCPMSS.c $RAW_LINUX/net/netfilter/xt_TCPMSS.c
-          curl -sSo net/netfilter/xt_tcpmss.c $RAW_LINUX/net/netfilter/xt_tcpmss.c
-          
-          curl -sSo net/ipv4/netfilter/ipt_ECN.c $RAW_LINUX/net/ipv4/netfilter/ipt_ECN.c
-          curl -sSo net/ipv4/netfilter/ipt_ecn.c $RAW_LINUX/net/ipv4/netfilter/ipt_ecn.c
-          curl -sSo net/ipv4/netfilter/ipt_TTL.c $RAW_LINUX/net/ipv4/netfilter/ipt_TTL.c
-          curl -sSo net/ipv4/netfilter/ipt_ttl.c $RAW_LINUX/net/ipv4/netfilter/ipt_ttl.c
-          
-          curl -sSo net/ipv6/netfilter/ip6t_HL.c $RAW_LINUX/net/ipv6/netfilter/ip6t_HL.c
-          curl -sSo net/ipv6/netfilter/ip6t_hl.c $RAW_LINUX/net/ipv6/netfilter/ip6t_hl.c
-          # -----------------------------------------
+
+          # 1. Base Netfilter (xt_*)
+          for base in connmark dscp mark rateest tcpmss; do
+            upper=$(echo $base | tr '[:lower:]' '[:upper:]')
+            curl -sSo "include/uapi/linux/netfilter/xt_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter/xt_${upper}.h"
+            curl -sSo "include/uapi/linux/netfilter/xt_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter/xt_${base}.h"
+            curl -sSo "net/netfilter/xt_${upper}.c" "$RAW_LINUX/net/netfilter/xt_${upper}.c"
+            curl -sSo "net/netfilter/xt_${base}.c" "$RAW_LINUX/net/netfilter/xt_${base}.c"
+          done
+
+          # 2. IPv4 Netfilter (ipt_*)
+          for base in ecn ttl; do
+            upper=$(echo $base | tr '[:lower:]' '[:upper:]')
+            curl -sSo "include/uapi/linux/netfilter_ipv4/ipt_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_${upper}.h"
+            curl -sSo "include/uapi/linux/netfilter_ipv4/ipt_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_${base}.h"
+            curl -sSo "net/ipv4/netfilter/ipt_${upper}.c" "$RAW_LINUX/net/ipv4/netfilter/ipt_${upper}.c"
+            curl -sSo "net/ipv4/netfilter/ipt_${base}.c" "$RAW_LINUX/net/ipv4/netfilter/ipt_${base}.c"
+          done
+
+          # 3. IPv6 Netfilter (ip6t_*)
+          for base in hl; do
+            upper=$(echo $base | tr '[:lower:]' '[:upper:]')
+            curl -sSo "include/uapi/linux/netfilter_ipv6/ip6t_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_${upper}.h"
+            curl -sSo "include/uapi/linux/netfilter_ipv6/ip6t_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_${base}.h"
+            curl -sSo "net/ipv6/netfilter/ip6t_${upper}.c" "$RAW_LINUX/net/ipv6/netfilter/ip6t_${upper}.c"
+            curl -sSo "net/ipv6/netfilter/ip6t_${base}.c" "$RAW_LINUX/net/ipv6/netfilter/ip6t_${base}.c"
+          done
+          # -------------------------------------------------------------
 
           DEFCONFIG=$(find arch/arm64/configs -name "*a04s*" -o -name "*a04*defconfig" 2>/dev/null | head -1 | xargs -r basename)
           [ -z "$DEFCONFIG" ] && DEFCONFIG="a04_defconfig"
