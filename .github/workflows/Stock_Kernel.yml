@@ -93,6 +93,19 @@ jobs:
           cd "$KERNEL_DIR"
           export PATH=$HOME/toolchain/clang/bin:$PATH
 
+          # --- PEMBERSIH KCONFIG & MALI DRIVER ---
+          echo "-> Memperbaiki Kconfig driver GPU yang hilang..."
+          # 1. Hapus baris pemanggil nouveau yang bikin error 404
+          sed -i '/nouveau/d' drivers/gpu/drm/Kconfig 2>/dev/null || true
+          
+          # 2. Amankan syntax Mali Kconfig dari error Clang modern
+          MALI_DIR="drivers/gpu/arm"
+          if [ -d "$MALI_DIR" ]; then
+            find "$MALI_DIR" -type f -name "Kconfig" -exec sed -i '/\$(shell/d; /\$(success/d; /\$(cc-option/d' {} \;
+            sed -i '27,30d' "$MALI_DIR/Kconfig" 2>/dev/null || true
+          fi
+          # --------------------------------------
+
           DEFCONFIG=$(find arch/arm64/configs -name "*a04s*" -o -name "*a04*defconfig" 2>/dev/null | head -1 | xargs -r basename)
           [ -z "$DEFCONFIG" ] && DEFCONFIG="a04_defconfig"
           echo "Using defconfig: $DEFCONFIG"
