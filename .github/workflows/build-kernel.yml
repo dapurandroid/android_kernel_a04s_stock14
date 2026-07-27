@@ -321,39 +321,41 @@ jobs:
           sed -i '/arc/d' include/soc/Kconfig 2>/dev/null || true
           sed -i '/arc/d' drivers/soc/Kconfig 2>/dev/null || true
 
-          # --- [TARGETED SNIPER RESTORE V2 - AUTOMATED LOOP] ---
-          # Otomatis mengunduh versi HURUF BESAR dan KECIL untuk semua file netfilter yang bentrok
+          # --- [TARGETED SNIPER RESTORE V3 - THE FINAL LOOP] ---
           echo "-> Melakukan Targeted Restore otomatis..."
           RAW_LINUX="https://raw.githubusercontent.com/torvalds/linux/v5.4"
           
           mkdir -p include/uapi/linux/netfilter include/uapi/linux/netfilter_ipv4 include/uapi/linux/netfilter_ipv6
           mkdir -p net/netfilter net/ipv4/netfilter net/ipv6/netfilter
 
-          # 1. Base Netfilter (xt_*)
-          for base in connmark dscp mark rateest tcpmss; do
+          # Tambahan -f agar tidak mendownload halaman "404 Not Found"
+          CURL_CMD="curl -fsSLo"
+
+          # 1. Base Netfilter (xt_*) -> Ditambah "hl" (Hop Limit)
+          for base in connmark dscp hl mark rateest tcpmss; do
             upper=$(echo $base | tr '[:lower:]' '[:upper:]')
-            curl -sSo "include/uapi/linux/netfilter/xt_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter/xt_${upper}.h"
-            curl -sSo "include/uapi/linux/netfilter/xt_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter/xt_${base}.h"
-            curl -sSo "net/netfilter/xt_${upper}.c" "$RAW_LINUX/net/netfilter/xt_${upper}.c"
-            curl -sSo "net/netfilter/xt_${base}.c" "$RAW_LINUX/net/netfilter/xt_${base}.c"
+            $CURL_CMD "include/uapi/linux/netfilter/xt_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter/xt_${upper}.h" || true
+            $CURL_CMD "include/uapi/linux/netfilter/xt_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter/xt_${base}.h" || true
+            $CURL_CMD "net/netfilter/xt_${upper}.c" "$RAW_LINUX/net/netfilter/xt_${upper}.c" || true
+            $CURL_CMD "net/netfilter/xt_${base}.c" "$RAW_LINUX/net/netfilter/xt_${base}.c" || true
           done
 
           # 2. IPv4 Netfilter (ipt_*)
           for base in ecn ttl; do
             upper=$(echo $base | tr '[:lower:]' '[:upper:]')
-            curl -sSo "include/uapi/linux/netfilter_ipv4/ipt_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_${upper}.h"
-            curl -sSo "include/uapi/linux/netfilter_ipv4/ipt_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_${base}.h"
-            curl -sSo "net/ipv4/netfilter/ipt_${upper}.c" "$RAW_LINUX/net/ipv4/netfilter/ipt_${upper}.c"
-            curl -sSo "net/ipv4/netfilter/ipt_${base}.c" "$RAW_LINUX/net/ipv4/netfilter/ipt_${base}.c"
+            $CURL_CMD "include/uapi/linux/netfilter_ipv4/ipt_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_${upper}.h" || true
+            $CURL_CMD "include/uapi/linux/netfilter_ipv4/ipt_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_${base}.h" || true
+            $CURL_CMD "net/ipv4/netfilter/ipt_${upper}.c" "$RAW_LINUX/net/ipv4/netfilter/ipt_${upper}.c" || true
+            $CURL_CMD "net/ipv4/netfilter/ipt_${base}.c" "$RAW_LINUX/net/ipv4/netfilter/ipt_${base}.c" || true
           done
 
           # 3. IPv6 Netfilter (ip6t_*)
           for base in hl; do
             upper=$(echo $base | tr '[:lower:]' '[:upper:]')
-            curl -sSo "include/uapi/linux/netfilter_ipv6/ip6t_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_${upper}.h"
-            curl -sSo "include/uapi/linux/netfilter_ipv6/ip6t_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_${base}.h"
-            curl -sSo "net/ipv6/netfilter/ip6t_${upper}.c" "$RAW_LINUX/net/ipv6/netfilter/ip6t_${upper}.c"
-            curl -sSo "net/ipv6/netfilter/ip6t_${base}.c" "$RAW_LINUX/net/ipv6/netfilter/ip6t_${base}.c"
+            $CURL_CMD "include/uapi/linux/netfilter_ipv6/ip6t_${upper}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_${upper}.h" || true
+            $CURL_CMD "include/uapi/linux/netfilter_ipv6/ip6t_${base}.h" "$RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_${base}.h" || true
+            $CURL_CMD "net/ipv6/netfilter/ip6t_${upper}.c" "$RAW_LINUX/net/ipv6/netfilter/ip6t_${upper}.c" || true
+            $CURL_CMD "net/ipv6/netfilter/ip6t_${base}.c" "$RAW_LINUX/net/ipv6/netfilter/ip6t_${base}.c" || true
           done
           # -------------------------------------------------------------
 
