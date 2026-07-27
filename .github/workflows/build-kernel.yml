@@ -315,13 +315,25 @@ jobs:
           cd "$KERNEL_DIR"
           export PATH=$HOME/toolchain/clang/bin:$PATH
 
-          # --- [TAMBAHAN BARU] SAPU BERSIH JEJAK KCONFIG ---
-          # Membungkam error file nouveau dan arc yang sudah kita hapus dari source code
+          # --- [TAMBAHAN BARU] SAPU BERSIH KCONFIG & RESTORE KORBAN WINDOWS ---
           echo "-> Menghapus jejak nouveau dan arc dari Kconfig..."
           sed -i '/nouveau/d' drivers/gpu/drm/Kconfig 2>/dev/null || true
           sed -i '/arc/d' include/soc/Kconfig 2>/dev/null || true
           sed -i '/arc/d' drivers/soc/Kconfig 2>/dev/null || true
-          # -------------------------------------------------
+
+          echo "-> Mengunduh kembali file netfilter yang tewas akibat Windows..."
+          mkdir -p include/uapi/linux/netfilter include/uapi/linux/netfilter_ipv4 include/uapi/linux/netfilter_ipv6
+          
+          RAW_LINUX="https://raw.githubusercontent.com/torvalds/linux/v5.4"
+          curl -sSo include/uapi/linux/netfilter/xt_connmark.h $RAW_LINUX/include/uapi/linux/netfilter/xt_connmark.h
+          curl -sSo include/uapi/linux/netfilter/xt_rateest.h $RAW_LINUX/include/uapi/linux/netfilter/xt_rateest.h
+          curl -sSo include/uapi/linux/netfilter/xt_tcpmss.h $RAW_LINUX/include/uapi/linux/netfilter/xt_tcpmss.h
+          curl -sSo include/uapi/linux/netfilter/xt_dscp.h $RAW_LINUX/include/uapi/linux/netfilter/xt_dscp.h
+          curl -sSo include/uapi/linux/netfilter/xt_mark.h $RAW_LINUX/include/uapi/linux/netfilter/xt_mark.h
+          curl -sSo include/uapi/linux/netfilter_ipv4/ipt_ecn.h $RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_ecn.h
+          curl -sSo include/uapi/linux/netfilter_ipv4/ipt_ttl.h $RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_ttl.h
+          curl -sSo include/uapi/linux/netfilter_ipv6/ip6t_hl.h $RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_hl.h
+          # --------------------------------------------------------------------
 
           DEFCONFIG=$(find arch/arm64/configs -name "*a04s*" -o -name "*a04*defconfig" 2>/dev/null | head -1 | xargs -r basename)
           [ -z "$DEFCONFIG" ] && DEFCONFIG="a04_defconfig"
