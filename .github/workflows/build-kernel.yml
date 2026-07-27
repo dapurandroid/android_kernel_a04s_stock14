@@ -388,7 +388,13 @@ jobs:
             -e CONFIG_KPROBE_EVENTS \
             -e CONFIG_OVERLAY_FS \
             -e CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE \
-            -d CONFIG_KSU_DEBUG
+            -d CONFIG_KSU_DEBUG \
+            -d CONFIG_PROCA \
+            -d CONFIG_DEFEX \
+            -d CONFIG_SECURITY_DEFEX \
+            -d CONFIG_SECURITY_PROCA \
+            -d CONFIG_KNOX_KAP \
+            -d CONFIG_SEC_RESTRICT
 
           scripts/config --file "$OUT_DIR/.config" \
             --disable CONFIG_LTO \
