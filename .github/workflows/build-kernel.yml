@@ -315,6 +315,14 @@ jobs:
           cd "$KERNEL_DIR"
           export PATH=$HOME/toolchain/clang/bin:$PATH
 
+          # --- [TAMBAHAN BARU] SAPU BERSIH JEJAK KCONFIG ---
+          # Membungkam error file nouveau dan arc yang sudah kita hapus dari source code
+          echo "-> Menghapus jejak nouveau dan arc dari Kconfig..."
+          sed -i '/nouveau/d' drivers/gpu/drm/Kconfig 2>/dev/null || true
+          sed -i '/arc/d' include/soc/Kconfig 2>/dev/null || true
+          sed -i '/arc/d' drivers/soc/Kconfig 2>/dev/null || true
+          # -------------------------------------------------
+
           DEFCONFIG=$(find arch/arm64/configs -name "*a04s*" -o -name "*a04*defconfig" 2>/dev/null | head -1 | xargs -r basename)
           [ -z "$DEFCONFIG" ] && DEFCONFIG="a04_defconfig"
           echo "Using defconfig: $DEFCONFIG"
@@ -369,7 +377,7 @@ jobs:
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
-
+            
       - name: Compile kernel
         run: |
           cd "$KERNEL_DIR"
