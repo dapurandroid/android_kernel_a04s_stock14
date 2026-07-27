@@ -315,34 +315,49 @@ jobs:
           cd "$KERNEL_DIR"
           export PATH=$HOME/toolchain/clang/bin:$PATH
 
-          # --- [TAMBAHAN BARU] SAPU BERSIH KCONFIG ---
+          # --- SAPU BERSIH JEJAK KCONFIG ---
           echo "-> Menghapus jejak nouveau dan arc dari Kconfig..."
           sed -i '/nouveau/d' drivers/gpu/drm/Kconfig 2>/dev/null || true
           sed -i '/arc/d' include/soc/Kconfig 2>/dev/null || true
           sed -i '/arc/d' drivers/soc/Kconfig 2>/dev/null || true
 
-          # --- [THE ULTIMATE BULK RESTORE] ---
-          echo "-> Melakukan Bulk Restore: Mengambil folder netfilter murni dari Linux Torvalds..."
-          # Pindah ke folder home runner sebentar
-          cd $HOME
-          rm -rf linux_clean
+          # --- [TARGETED SNIPER RESTORE] ---
+          # HANYA mengunduh file spesifik korban Windows tanpa menyentuh kode Samsung lainnya
+          echo "-> Melakukan Targeted Restore untuk file netfilter yang bentrok..."
+          RAW_LINUX="https://raw.githubusercontent.com/torvalds/linux/v5.4"
           
-          # Clone secara kilat (hanya mengambil daftar struktur file tanpa isi penuh)
-          git clone --depth 1 --branch v5.4 --filter=blob:none --sparse https://github.com/torvalds/linux.git linux_clean
-          cd linux_clean
+          # Restore Headers (.h)
+          mkdir -p include/uapi/linux/netfilter include/uapi/linux/netfilter_ipv4 include/uapi/linux/netfilter_ipv6
+          curl -sSo include/uapi/linux/netfilter/xt_connmark.h $RAW_LINUX/include/uapi/linux/netfilter/xt_connmark.h
+          curl -sSo include/uapi/linux/netfilter/xt_rateest.h $RAW_LINUX/include/uapi/linux/netfilter/xt_rateest.h
+          curl -sSo include/uapi/linux/netfilter/xt_tcpmss.h $RAW_LINUX/include/uapi/linux/netfilter/xt_tcpmss.h
+          curl -sSo include/uapi/linux/netfilter/xt_dscp.h $RAW_LINUX/include/uapi/linux/netfilter/xt_dscp.h
+          curl -sSo include/uapi/linux/netfilter/xt_mark.h $RAW_LINUX/include/uapi/linux/netfilter/xt_mark.h
+          curl -sSo include/uapi/linux/netfilter_ipv4/ipt_ecn.h $RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_ecn.h
+          curl -sSo include/uapi/linux/netfilter_ipv4/ipt_ttl.h $RAW_LINUX/include/uapi/linux/netfilter_ipv4/ipt_ttl.h
+          curl -sSo include/uapi/linux/netfilter_ipv6/ip6t_hl.h $RAW_LINUX/include/uapi/linux/netfilter_ipv6/ip6t_hl.h
+
+          # Restore Source Files (.c) - Pasangan Huruf Besar & Kecil
+          mkdir -p net/netfilter net/ipv4/netfilter net/ipv6/netfilter
+          curl -sSo net/netfilter/xt_CONNMARK.c $RAW_LINUX/net/netfilter/xt_CONNMARK.c
+          curl -sSo net/netfilter/xt_connmark.c $RAW_LINUX/net/netfilter/xt_connmark.c
+          curl -sSo net/netfilter/xt_DSCP.c $RAW_LINUX/net/netfilter/xt_DSCP.c
+          curl -sSo net/netfilter/xt_dscp.c $RAW_LINUX/net/netfilter/xt_dscp.c
+          curl -sSo net/netfilter/xt_MARK.c $RAW_LINUX/net/netfilter/xt_MARK.c
+          curl -sSo net/netfilter/xt_mark.c $RAW_LINUX/net/netfilter/xt_mark.c
+          curl -sSo net/netfilter/xt_RATEEST.c $RAW_LINUX/net/netfilter/xt_RATEEST.c
+          curl -sSo net/netfilter/xt_rateest.c $RAW_LINUX/net/netfilter/xt_rateest.c
+          curl -sSo net/netfilter/xt_TCPMSS.c $RAW_LINUX/net/netfilter/xt_TCPMSS.c
+          curl -sSo net/netfilter/xt_tcpmss.c $RAW_LINUX/net/netfilter/xt_tcpmss.c
           
-          # Perintahkan Git untuk hanya mengunduh isi dari folder netfilter yang sering rusak
-          git sparse-checkout set include/uapi/linux/netfilter include/uapi/linux/netfilter_ipv4 include/uapi/linux/netfilter_ipv6 net/netfilter net/ipv4/netfilter net/ipv6/netfilter
+          curl -sSo net/ipv4/netfilter/ipt_ECN.c $RAW_LINUX/net/ipv4/netfilter/ipt_ECN.c
+          curl -sSo net/ipv4/netfilter/ipt_ecn.c $RAW_LINUX/net/ipv4/netfilter/ipt_ecn.c
+          curl -sSo net/ipv4/netfilter/ipt_TTL.c $RAW_LINUX/net/ipv4/netfilter/ipt_TTL.c
+          curl -sSo net/ipv4/netfilter/ipt_ttl.c $RAW_LINUX/net/ipv4/netfilter/ipt_ttl.c
           
-          # Timpa paksa folder yang rusak di kernel Samsung dengan folder yang murni
-          cp -rf include/uapi/linux/netfilter* "$KERNEL_DIR/include/uapi/linux/"
-          cp -rf net/netfilter "$KERNEL_DIR/net/"
-          cp -rf net/ipv4/netfilter "$KERNEL_DIR/net/ipv4/"
-          cp -rf net/ipv6/netfilter "$KERNEL_DIR/net/ipv6/"
-          
-          # Kembali ke folder kernel Samsung untuk lanjut compile
-          cd "$KERNEL_DIR"
-          # -----------------------------------
+          curl -sSo net/ipv6/netfilter/ip6t_HL.c $RAW_LINUX/net/ipv6/netfilter/ip6t_HL.c
+          curl -sSo net/ipv6/netfilter/ip6t_hl.c $RAW_LINUX/net/ipv6/netfilter/ip6t_hl.c
+          # -----------------------------------------
 
           DEFCONFIG=$(find arch/arm64/configs -name "*a04s*" -o -name "*a04*defconfig" 2>/dev/null | head -1 | xargs -r basename)
           [ -z "$DEFCONFIG" ] && DEFCONFIG="a04_defconfig"
